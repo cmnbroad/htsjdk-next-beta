@@ -4,40 +4,89 @@ package org.htsjdk.core.utils;
 
 import com.google.common.jimfs.Configuration;
 import com.google.common.jimfs.Jimfs;
+import org.apache.commons.lang3.SystemUtils;
 import org.htsjdk.core.api.PathURI;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import java.io.*;
-import java.nio.file.FileSystem;
-import java.nio.file.FileSystemNotFoundException;
-import java.nio.file.Path;
+import java.nio.file.*;
 
 public class PathSpecifierUnitTest {
-    @DataProvider
-    public Object[][] getURIs() throws IOException {
-        return new Object[][] {
-                // input URI, expected resulting URI string, isNIO, isPath
-                {"localFile.bam",                   "file://" + getCWD() + "localFile.bam", true, true},
-                {"/localFile.bam",                  "file:///localFile.bam",                true, true},
-                {"file:/localFile.bam",             "file:/localFile.bam",                  true, true},
-                {"file:localFile.bam",              "file:localFile.bam",                   true, false}, // opaque, but not hierarchical
-                {"file://localFile.bam",            "file://localFile.bam",                 true, false}, // file URLs can't have an authority ("localFile.bam")
-                {"file:///localFile.bam",           "file:///localFile.bam",                true, true},  // empty authority
 
-                {"path/to/localFile.bam",           "file://" + getCWD() + "path/to/localFile.bam", true, true},
-                {"/path/to/localFile.bam",          "file:///path/to/localFile.bam",    true, true},
-                {"file:path/to/localFile.bam",      "file:path/to/localFile.bam",       true, false},
-                {"file:/path/to/localFile.bam",     "file:/path/to/localFile.bam",      true, true},
-                {"file://path/to/localFile.bam",    "file://path/to/localFile.bam",     true, false}, // "path" looks like an authority, but won't be treated that way
+    final static String FS_SEPARATOR = FileSystems.getDefault().getSeparator();
+
+    @DataProvider
+    public Object[][] validPathSpecifiers() {
+        return new Object[][] {
+                // Paths specifiers that are syntactically valid as either a relative or absolute local file
+                // name, or as a URI, but which may fail isNIO or isPath
+
+                // input String, expected resulting URI String, expected isNIO, expected isPath
+
+                //********************************
+                // Local (non-URI) file references
+                //********************************
+
+                {"localFile.bam",                   "file://" + getCWDAsURIPathString() + "localFile.bam", true, true},
+                // absolute reference to a file in the root of the current file system (Windows accepts the "/" as root)
+                {"/localFile.bam",                  "file://" + getRootDirectoryAsURIPathString() + "localFile.bam", true, true},
+                // absolute reference to a file in the root of the current file system, where root is specified using the
+                // default FS separator
+                {FS_SEPARATOR + "localFile.bam",  "file://" + getRootDirectoryAsURIPathString() + "localFile.bam", true, true},
+                // absolute reference to a file
+                {FS_SEPARATOR + joinWithFSSeparator("path", "to", "localFile.bam"),
+                        "file://" + getRootDirectoryAsURIPathString() + "path/to/localFile.bam",  true, true},
+                // absolute reference to a file that contains a URI "excluded" character in the path ("#"), which without
+                // encoding will be treated as a fragment delimiter
+                {FS_SEPARATOR + joinWithFSSeparator("project", "gvcf-pcr", "23232_1#1", "1.g.vcf.gz"),
+                        "file://" + getRootDirectoryAsURIPathString() + "project/gvcf-pcr/23232_1%231/1.g.vcf.gz", true, true},
+                // relative reference to a file on the local file system
+                {joinWithFSSeparator("path", "to", "localFile.bam"),
+                        "file://" + getCWDAsURIPathString() + "path/to/localFile.bam", true, true},
+                // Windows also accepts "/" as a valid root specifier
+                {"/", "file://" + getRootDirectoryAsURIPathString(), true, true},
+                {".", "file://" + getCWDAsURIPathString() + "./", true, true},
+                {"../.", "file://" + getCWDAsURIPathString() + ".././", true, true},
+                // an empty path is equivalent to accessing the current directory of the default file system
+                {"", "file://" + getCWDAsURIPathString(), true, true},
+
+                //***********************************************************
+                // Local file references using a URI with a "file://" scheme.
+                //***********************************************************
+
+                {"file:localFile.bam",              "file:localFile.bam",           true, false}, // absolute, opaque (not hierarchical)
+                {"file:/localFile.bam",             "file:/localFile.bam",          true, true},  // absolute, hierarchical
+                {"file://localFile.bam",            "file://localFile.bam",         true, false}, // file URLs can't have an authority ("localFile.bam")
+                {"file:///localFile.bam",           "file:///localFile.bam",        true, true},  // empty authority
+                {"file:path/to/localFile.bam",      "file:path/to/localFile.bam",   true, false},
+                {"file:/path/to/localFile.bam",     "file:/path/to/localFile.bam",  true, true},
+                // "path" appears to be an authority, and will be accepted on Windows since this URI will be
+                // interpreted as a UNC path containing an authority
+                {"file://path/to/localFile.bam",    "file://path/to/localFile.bam", true, SystemUtils.IS_OS_WINDOWS},
+                // "localhost" is accepted as a special case authority for "file://" Paths on Windows; but not Linux/Mac
+                {"file://localhost/to/localFile.bam","file://localhost/to/localFile.bam", true, SystemUtils.IS_OS_WINDOWS},
                 {"file:///path/to/localFile.bam",   "file:///path/to/localFile.bam",    true, true},  // empty authority
+
+                //*****************************************************************************
+                // Valid URIs which are NOT valid NIO paths (no installed file system provider)
+                //*****************************************************************************
 
                 {"gs://file.bam",                   "gs://file.bam",                    false, false},
                 {"gs://bucket/file.bam",            "gs://bucket/file.bam",             false, false},
                 {"gs:///bucket/file.bam",           "gs:///bucket/file.bam",            false, false},
                 {"gs://auth/bucket/file.bam",       "gs://auth/bucket/file.bam",        false, false},
                 {"gs://hellbender/test/resources/", "gs://hellbender/test/resources/",  false, false},
+                {"gcs://abucket/bucket",            "gcs://abucket/bucket",             false, false},
+                {"gendb://somegdb",                 "gendb://somegdb",                  false, false},
+                {"chr1:1-100",                      "chr1:1-100",                       false, false},
+
+                //*****************************************************************************************
+                // Valid URIs which are backed by an installed NIO file system provider), but are which not
+                // actually resolvable as paths because the scheme-specific part is not valid for one reason
+                // or another.
+                //**********************************************************************************************
 
                 // uri must have a path: jimfs:file.bam
                 {"jimfs:file.bam",      "jimfs:file.bam", true, false},
@@ -47,78 +96,42 @@ public class PathSpecifierUnitTest {
                 {"jimfs://file.bam",    "jimfs://file.bam", true, false},
                 // java.lang.AssertionError: java.net.URISyntaxException: Expected scheme-specific part at index 6: jimfs:
                 {"jimfs:///file.bam",   "jimfs:///file.bam", true, false},
+                // java.nio.file.FileSystemNotFoundException: jimfs://root
+                {"jimfs://root/file.bam","jimfs://root/file.bam", true, false},
 
-                //{"jimfs://root/file.bam",   "jimfs://root/file.bam", true, true},
+                //***********************************************************************************************
+                // References that contain characters that require URI-encoding. If the input string is presented
+                // without no scheme, it will be be automatically encoded by PathSpecifier, otherwise it
+                // must already be URI-encoded.
+                //***********************************************************************************************
 
-                // URIs with a "#" in the path part, which is valid URI syntax, but without encoding will be
-                // treated as a fragment delimiter.
-                {"/project/gvcf-pcr/23232_1#1/1.g.vcf.gz",      "file:///project/gvcf-pcr/23232_1%231/1.g.vcf.gz", true, true},
-                {"project/gvcf-pcr/23232_1#1/1.g.vcf.gz",       "file://" + getCWD() + "project/gvcf-pcr/23232_1%231/1.g.vcf.gz", true, true},
-
-                // URIs that are presented with a scheme included must already be escaped/encoded, otherwise we'd
-                // double-encode them
+                // relative (non-URI) reference to a file on the local file system that contains a URI fragment delimiter
+                // is automatically URI-encoded
+                {joinWithFSSeparator("project", "gvcf-pcr", "23232_1#1", "1.g.vcf.gz"),
+                        "file://" + getCWDAsURIPathString() + "project/gvcf-pcr/23232_1%231/1.g.vcf.gz", true, true},
+                // URI reference with fragment delimiter is not automatically URI-encoded
                 {"file:project/gvcf-pcr/23232_1#1/1.g.vcf.gz",  "file:project/gvcf-pcr/23232_1#1/1.g.vcf.gz", true, false},
                 {"file:/project/gvcf-pcr/23232_1#1/1.g.vcf.gz", "file:/project/gvcf-pcr/23232_1#1/1.g.vcf.gz", true, false},
-
-                {"gendb://somegdb",             "gendb://somegdb", false, false},
-                {"gcs://abucket/bucket",        "gcs://abucket/bucket", false, false},
-
-                {"chr1:1-100", "chr1:1-100", false, false},
-                {"", "file://" + getCWD(), true, true},       // an empty path is equivalent to accessing the default directory of the default file system
-                {"/", "file:///", true, true},
-                {"///", "file:///", true, true},
-
-                // "file:" URI is presented already encoded/escaped and will not be altered by the URI class
-                {"file:///project/gvcf-pcr/23232_1%231/1.g.vcf.g", "file:///project/gvcf-pcr/23232_1%231/1.g.vcf.g", true, true}
+                {"file:///project/gvcf-pcr/23232_1%231/1.g.vcf.g", "file:///project/gvcf-pcr/23232_1%231/1.g.vcf.g", true, true},
         };
     }
 
-    @Test(dataProvider = "getURIs")
-    public void testURIValid(final String uriString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
-        final PathURI pathURI = new PathSpecifier(uriString);
+    @Test(dataProvider = "validPathSpecifiers")
+    public void testPathSpecifier(final String referenceString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
+        final PathURI pathURI = new PathSpecifier(referenceString);
         Assert.assertNotNull(pathURI);
         Assert.assertEquals(pathURI.getURI().toString(), expectedURIString);
     }
 
-    @DataProvider
-    public Object[][] getInvalidURIs() {
-        return new Object[][] {
-                {"file://^"},
-                {"file://"},
-                {"underbar_is_invalid_in_scheme:///foobar"},
-        };
-    }
-
-    @Test(dataProvider = "getInvalidURIs", expectedExceptions = IllegalArgumentException.class)
-    public void testURIInvalid(final String invalidURIString) {
-        new PathSpecifier(invalidURIString);
-    }
-
-    @Test(dataProvider = "getURIs")
-    public void testIsNIOValid(final String uriString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
-        final PathURI pathURI = new PathSpecifier(uriString);
+    @Test(dataProvider = "validPathSpecifiers")
+    public void testIsNIO(final String referenceString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
+        final PathURI pathURI = new PathSpecifier(referenceString);
         Assert.assertEquals(pathURI.isNIO(), isNIO);
     }
 
-    @DataProvider
-    public Object[][] getInvalidNIOURIs() {
-        return new Object[][]{
-                // URIs with schemes that don't have an NIO provider
-                {"unknownscheme://foobar"},
-                {"gcs://abucket/bucket"},
-                {"gendb://adb"},
-        };
-    }
-
-    @Test(dataProvider = "getInvalidNIOURIs")
-    public void testIsNIOInvalid(final String invalidNIOURI) {
-        final PathURI pathURI = new PathSpecifier(invalidNIOURI);
-        Assert.assertEquals(pathURI.isNIO(), false);
-    }
-
-    @Test(dataProvider = "getURIs")
-    public void testIsPathValid(final String uriString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
-        final PathURI pathURI = new PathSpecifier(uriString);
+    @Test(dataProvider = "validPathSpecifiers")
+    public void testIsPath(final String referenceString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
+        final PathURI pathURI = new PathSpecifier(referenceString);
         if (isPath) {
             Assert.assertEquals(pathURI.isPath(), isPath, pathURI.getToPathFailureReason());
         } else {
@@ -126,9 +139,9 @@ public class PathSpecifierUnitTest {
         }
     }
 
-    @Test(dataProvider = "getURIs")
-    public void testToPathValid(final String uriString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
-        final PathURI pathURI = new PathSpecifier(uriString);
+    @Test(dataProvider = "validPathSpecifiers")
+    public void testToPath(final String referenceString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
+        final PathURI pathURI = new PathSpecifier(referenceString);
         if (isPath) {
             final Path path = pathURI.toPath();
             Assert.assertEquals(path != null, isPath, pathURI.getToPathFailureReason());
@@ -138,22 +151,32 @@ public class PathSpecifierUnitTest {
     }
 
     @DataProvider
-    public Object[][] getInvalidPaths() {
-        return new Object[][]{
-                // valid URIs that are not valid as a path
+    public Object[][] invalidPathSpecifiers() {
+        return new Object[][] {
+                // the nul character is rejected on all of the supported platforms in both local
+                // filenames and URIs, so use it to test PathSpecifier constructor failure on all platforms
+                {"\0"},
+        };
+    }
+
+    @Test(dataProvider = "invalidPathSpecifiers", expectedExceptions = {IllegalArgumentException.class})
+    public void testPathSpecifierInvalid(final String referenceString) {
+        new PathSpecifier(referenceString);
+    }
+
+    @DataProvider
+    public Object[][] invalidPath() {
+        return new Object[][] {
+                // valid references that are not valid as a path
 
                 {"file:/project/gvcf-pcr/23232_1#1/1.g.vcf.gz"},    // not encoded
-                {"file://path/to/file.bam"},  // Paths.get throws IllegalArgumentException, 2 leading slashes (vs. 3)
-                // causes "path" to be interpreted as an invalid authority name
-                {"file:project/gvcf-pcr/23232_1#1/1.g.vcf.gz"},     // scheme-specific part is not hierarchichal
+                {"file:project/gvcf-pcr/23232_1#1/1.g.vcf.gz"},     // scheme-specific part is not hierarchical
 
                 // The hadoop file system provider explicitly throws an NPE if no host is specified and HDFS is not
                 // the default file system
                 //{"hdfs://nonexistent_authority/path/to/file.bam"},  // unknown authority "nonexistent_authority"
                 {"hdfs://userinfo@host:80/path/to/file.bam"},           // UnknownHostException "host"
 
-                // TODO NOTE: the URIs from here down are accepted by IOUtils (public static Path getPath(String uriString))
-                // as valid Paths, even though they are unresolvable and otherwise pretty much useless.
                 {"unknownscheme://foobar"},
                 {"gendb://adb"},
                 {"gcs://abucket/bucket"},
@@ -161,41 +184,57 @@ public class PathSpecifierUnitTest {
                 // URIs with schemes that are backed by an valid NIO provider, but for which the
                 // scheme-specific part is not valid.
                 {"file://nonexistent_authority/path/to/file.bam"},  // unknown authority "nonexistent_authority"
-                {"file://path/to/file.bam"},                        // unknown authority "path"
         };
     }
 
-    @Test(dataProvider = "getInvalidPaths")
+    @Test(dataProvider = "invalidPath")
     public void testIsPathInvalid(final String invalidPathString) {
         final PathURI htsURI = new PathSpecifier(invalidPathString);
         Assert.assertFalse(htsURI.isPath());
     }
 
-    @Test(dataProvider = "getInvalidPaths", expectedExceptions = {IllegalArgumentException.class, FileSystemNotFoundException.class})
+    @Test(dataProvider = "invalidPath", expectedExceptions = {IllegalArgumentException.class, FileSystemNotFoundException.class})
     public void testToPathInvalid(final String invalidPathString) {
         final PathURI htsURI = new PathSpecifier(invalidPathString);
         htsURI.toPath();
     }
 
-    @DataProvider
-     public Object[][] getInputStreamURIs() throws IOException {
-        return new Object[][]{
-                // URIs that can be resolved to an actual test file
-                {"../data/utils/testTextFile.txt", "Test file."},
-                {"file:///" + getCWD() + "../data/utils/testTextFile.txt", "Test file."},
+    @Test
+    public void testInstalledNonDefaultFileSystem() throws IOException {
+        // create a jimfs file system and round trip through PathSpecifier/stream
+        try (FileSystem jimfs = Jimfs.newFileSystem(Configuration.unix())) {
+            final Path outputPath = jimfs.getPath("alternateFileSystemTest.txt");
+            doStreamRoundTrip(outputPath.toUri().toString());
+        }
+    }
 
-                // URIs with an embedded fragemnt delimiter ("#"); if the file scheme is included, the rest of the path
-                // must already be escaped; ifno file scheme is included, the path will be escaped by the URI class
-                {"../data/utils/testDirWith#InName/testTextFile.txt", "Test file."},
-                {"file:///" + getCWD() + "../data/utils/testDirWith%23InName/testTextFile.txt", "Test file."},
+    @DataProvider
+     public Object[][] inputStreamSpecifiers() throws IOException {
+        return new Object[][]{
+                // references that can be resolved to an actual test file that can be read
+
+                // relative (file) reference to a local file
+                {joinWithFSSeparator("..", "data", "utils", "testTextFile.txt"), "Test file."},
+
+                // absolute reference to a local file
+                {getCWDAsFileReference() + FS_SEPARATOR + joinWithFSSeparator("..", "data", "utils", "testTextFile.txt"), "Test file."},
+
+                // URI reference to a local file, where the path is absolute
+                {"file://" + getCWDAsURIPathString() + "../data/utils/testTextFile.txt", "Test file."},
+
+                // reference to a local file with an embedded fragment delimiter ("#") in the name; if the file
+                // scheme is included, the rest of the path must already be encoded; if no file scheme is
+                // included, the path is encoded by the PathSpecifier class
+                {joinWithFSSeparator("..", "data", "utils", "testDirWith#InName", "testTextFile.txt"), "Test file."},
+                {"file://" + getCWDAsURIPathString() + "../data/utils/testDirWith%23InName/testTextFile.txt", "Test file."},
         };
     }
 
-    @Test(dataProvider = "getInputStreamURIs")
-    public void testGetInputStream(final String uriString, final String expectedFileContents) throws IOException {
-        final PathURI htsURI = new PathSpecifier(uriString);
+    @Test(dataProvider = "inputStreamSpecifiers")
+    public void testGetInputStream(final String referenceString, final String expectedFileContents) throws IOException {
+        final PathURI htsURI = new PathSpecifier(referenceString);
 
-        try (final  InputStream is = htsURI.getInputStream();
+        try (final InputStream is = htsURI.getInputStream();
              final DataInputStream dis = new DataInputStream(is)) {
             final byte[] actualFileContents = new byte[expectedFileContents.length()];
             dis.readFully(actualFileContents);
@@ -205,32 +244,61 @@ public class PathSpecifierUnitTest {
     }
 
     @DataProvider
-    public Object[][] getOutputStreamURIs() throws IOException {
+    public Object[][] outputStreamSpecifiers() throws IOException {
         return new Object[][]{
                 // output URIs that can be resolved to an actual test file
-                { IOUtils.createTempFile("testOutputStream", ".txt").getPath()},
-                {"file://" + IOUtils.createTempFile("testOutputStream", ".txt").getAbsolutePath()},
+                {IOUtils.createTempPath("testOutputStream", ".txt").toString()},
+                {"file://" + getLocalFileAsURIPathString(IOUtils.createTempPath("testOutputStream", ".txt"))},
         };
     }
 
-    @Test(dataProvider = "getOutputStreamURIs")
-    public void testGetOutputStream(final String tempURIString) throws IOException {
-        testStreamRoundTrip(tempURIString);
+    @Test(dataProvider = "outputStreamSpecifiers")
+    public void testGetOutputStream(final String referenceString) throws IOException {
+        doStreamRoundTrip(referenceString);
     }
 
     @Test
-    public void testAlternateFileSystem() throws IOException {
-        // create a jimfs file system and round trip through PathSpecifier/stream
-        try (FileSystem jimfs = Jimfs.newFileSystem(Configuration.unix())) {
-            final Path outputPath = jimfs.getPath("alternateFileSystemTest.txt");
-            testStreamRoundTrip(outputPath.toUri().toString());
+    public void testStdIn() throws IOException {
+        final PathURI htsURI = new PathSpecifier(
+                SystemUtils.IS_OS_WINDOWS ?
+                        "-" :
+                        "/dev/stdin");
+        try (final InputStream is = htsURI.getInputStream();
+             final DataInputStream dis = new DataInputStream(is)) {
+            final byte[] actualFileContents = new byte[0];
+            dis.readFully(actualFileContents);
+
+            Assert.assertEquals(new String(actualFileContents), "");
         }
     }
-	
-   private void testStreamRoundTrip(final String tempURIString) throws IOException {
+
+    @Test
+    public void testStdOut() throws IOException {
+        final PathURI pathURI = new PathSpecifier(
+                SystemUtils.IS_OS_WINDOWS ?
+                        "-" :
+                        "/dev/stdout");
+        try (final OutputStream os = pathURI.getOutputStream();
+             final DataOutputStream dos = new DataOutputStream(os)) {
+            dos.write("some stuff".getBytes());
+        }
+    }
+
+    /**
+     * Return the string resulting from joining the individual components using the local default
+     * file system separator.
+     *
+     * This is used to create test inputs that are local file references, as would be presented by a
+     * user on the platform on which these tests are running.
+     */
+    private String joinWithFSSeparator(String... parts) {
+        return String.join(FileSystems.getDefault().getSeparator(), parts);
+    }
+
+    private void doStreamRoundTrip(final String referenceString) throws IOException {
         final String expectedFileContents = "Test contents";
 
-        final PathURI pathURI = new PathSpecifier(tempURIString);
+        final PathURI pathURI = new PathSpecifier(referenceString);
         try (final OutputStream os = pathURI.getOutputStream();
              final DataOutputStream dos = new DataOutputStream(os)) {
             dos.write(expectedFileContents.getBytes());
@@ -246,9 +314,45 @@ public class PathSpecifierUnitTest {
         }
     }
 
-    // in order to test URIs that contain a "file://" scheme, we need to use absolute path names
-    private String getCWD() throws IOException {
-        final File cwd = new File(".");
-        return cwd.getCanonicalPath()  +"/";
+    /**
+     * Get an absolute reference to the current working directory using local file system syntax and
+     * the local file system separator. Used to construct valid local, absolute file references as test inputs.
+     *
+     * Returns a string of the form '/some/path/.` or `d:\some\path\.` on Windows
+     */
+    private static String getCWDAsFileReference() {
+        return new File(".").getAbsolutePath();
     }
+
+    /**
+     * Get the current working directory as a locally valid, hierarchical URI string. Used to
+     * construct expected URI string values for test inputs that are local file references.
+     *
+     * Returns '/some/path/` or `/d:/some/path/` on Windows
+     */
+    private String getCWDAsURIPathString() {
+        return getLocalFileAsURIPathString(Paths.get("."));
+    }
+
+    /**
+     * Get just the path part of the URI representing the current working directory. Used
+     * to construct expected URI string values for test inputs that specify a file in the
+     * root of the local file system.
+     *
+     * Returns a string of the form "/" or "/d:/" on Windows.
+     */
+    private String getRootDirectoryAsURIPathString() {
+        return getLocalFileAsURIPathString(Paths.get(FS_SEPARATOR));
+    }
+
+    /**
+     * Get just the path part of the URI representing a file on the local file system as a normalized
+     * String.
+     *
+     * Returns a string of the form `/some/path' or '/d:/some/path/` on Windows.
+     */
+    private String getLocalFileAsURIPathString(final Path localPath) {
+        return localPath.toUri().normalize().getPath();
+    }
+
 }
