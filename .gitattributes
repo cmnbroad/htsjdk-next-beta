@@ -1,0 +1,32 @@
+# All text files normalized to lf in repo (overrides local core.autocrlf)
+* text=auto
+
+# Explicitly declare text files that can use native line endings on checkout
+# (normalized on checkin).
+
+*.java text
+*.gradle text
+*.md text
+*.sam text
+*.dict text
+*.vcf text
+
+# Files that are binary and should not have line endings modified
+*.bam binary
+*.bai binary
+*.bcf binary
+*.bgz binary
+*.bgzf
+*.cram binary
+*.crai binary
+*.fai binary
+*.gz binary
+*.gzi binary
+*.gzip binary
+*.sbi binary
+*.tbi binary
+
+# Files that are text, but  are index-able and thus should be treated as binary
+# and not subject to line-ending transforms
+*.fasta binary
+*.fa binary
