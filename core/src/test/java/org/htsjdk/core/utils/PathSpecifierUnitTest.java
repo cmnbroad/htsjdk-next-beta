@@ -153,7 +153,8 @@ public class PathSpecifierUnitTest {
     @DataProvider
     public Object[][] invalidPathSpecifiers() {
         return new Object[][] {
-                // the nul character is rejected on windows and linux as invalid in both a local file and a URI
+                // the nul character is rejected on all of the supported platforms in both local
+                // filenames and URIs, so use it to test PathSpecifier constructor failure on all platforms
                 {"\0"},
         };
     }
@@ -258,10 +259,10 @@ public class PathSpecifierUnitTest {
 
     @Test
     public void testStdIn() throws IOException {
-        if (SystemUtils.IS_OS_WINDOWS) {
-            throw new SkipException("Skipping Unix specific tests)");
-        }
-        final PathURI htsURI = new PathSpecifier("/dev/stdin");
+        final PathURI htsURI = new PathSpecifier(
+                SystemUtils.IS_OS_WINDOWS ?
+                        "-" :
+                        "/dev/stdin");
         try (final InputStream is = htsURI.getInputStream();
              final DataInputStream dis = new DataInputStream(is)) {
             final byte[] actualFileContents = new byte[0];
@@ -273,10 +274,10 @@ public class PathSpecifierUnitTest {
 
     @Test
     public void testStdOut() throws IOException {
-        if (SystemUtils.IS_OS_WINDOWS) {
-            throw new SkipException("Skipping Unix specific tests)");
-        }
-        final PathURI pathURI = new PathSpecifier("/dev/stdout");
+        final PathURI pathURI = new PathSpecifier(
+                SystemUtils.IS_OS_WINDOWS ?
+                        "-" :
+                        "/dev/stdout");
         try (final OutputStream os = pathURI.getOutputStream();
              final DataOutputStream dos = new DataOutputStream(os)) {
             dos.write("some stuff".getBytes());
