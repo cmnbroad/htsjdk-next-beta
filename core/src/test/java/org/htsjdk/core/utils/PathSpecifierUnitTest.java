@@ -5,7 +5,7 @@ package org.htsjdk.core.utils;
 import com.google.common.jimfs.Configuration;
 import com.google.common.jimfs.Jimfs;
 import org.apache.commons.lang3.SystemUtils;
-import org.htsjdk.core.api.PathURI;
+import org.htsjdk.core.api.io.IOResource;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -118,22 +118,22 @@ public class PathSpecifierUnitTest {
 
     @Test(dataProvider = "validPathSpecifiers")
     public void testPathSpecifier(final String referenceString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
-        final PathURI pathURI = new PathSpecifier(referenceString);
-        Assert.assertNotNull(pathURI);
-        Assert.assertEquals(pathURI.getURI().toString(), expectedURIString);
+        final IOResource ioResource = new PathSpecifier(referenceString);
+        Assert.assertNotNull(ioResource);
+        Assert.assertEquals(ioResource.getURI().toString(), expectedURIString);
     }
 
     @Test(dataProvider = "validPathSpecifiers")
     public void testIsNIO(final String referenceString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
-        final PathURI pathURI = new PathSpecifier(referenceString);
+        final IOResource pathURI = new PathSpecifier(referenceString);
         Assert.assertEquals(pathURI.isNIO(), isNIO);
     }
 
     @Test(dataProvider = "validPathSpecifiers")
     public void testIsPath(final String referenceString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
-        final PathURI pathURI = new PathSpecifier(referenceString);
+        final IOResource pathURI = new PathSpecifier(referenceString);
         if (isPath) {
-            Assert.assertEquals(pathURI.isPath(), isPath, pathURI.getToPathFailureReason());
+            Assert.assertEquals(pathURI.isPath(), isPath, pathURI.getToPathFailureReason().orElse("no failure"));
         } else {
             Assert.assertEquals(pathURI.isPath(), isPath);
         }
@@ -141,10 +141,10 @@ public class PathSpecifierUnitTest {
 
     @Test(dataProvider = "validPathSpecifiers")
     public void testToPath(final String referenceString, final String expectedURIString, final boolean isNIO, final boolean isPath) {
-        final PathURI pathURI = new PathSpecifier(referenceString);
+        final IOResource pathURI = new PathSpecifier(referenceString);
         if (isPath) {
             final Path path = pathURI.toPath();
-            Assert.assertEquals(path != null, isPath, pathURI.getToPathFailureReason());
+            Assert.assertEquals(path != null, isPath, pathURI.getToPathFailureReason().orElse("no failure"));
         } else {
             Assert.assertEquals(pathURI.isPath(), isPath);
         }
@@ -189,13 +189,13 @@ public class PathSpecifierUnitTest {
 
     @Test(dataProvider = "invalidPath")
     public void testIsPathInvalid(final String invalidPathString) {
-        final PathURI htsURI = new PathSpecifier(invalidPathString);
+        final IOResource htsURI = new PathSpecifier(invalidPathString);
         Assert.assertFalse(htsURI.isPath());
     }
 
     @Test(dataProvider = "invalidPath", expectedExceptions = {IllegalArgumentException.class, FileSystemNotFoundException.class})
     public void testToPathInvalid(final String invalidPathString) {
-        final PathURI htsURI = new PathSpecifier(invalidPathString);
+        final IOResource htsURI = new PathSpecifier(invalidPathString);
         htsURI.toPath();
     }
 
@@ -232,7 +232,7 @@ public class PathSpecifierUnitTest {
 
     @Test(dataProvider = "inputStreamSpecifiers")
     public void testGetInputStream(final String referenceString, final String expectedFileContents) throws IOException {
-        final PathURI htsURI = new PathSpecifier(referenceString);
+        final IOResource htsURI = new PathSpecifier(referenceString);
 
         try (final InputStream is = htsURI.getInputStream();
              final DataInputStream dis = new DataInputStream(is)) {
@@ -259,7 +259,7 @@ public class PathSpecifierUnitTest {
 
     @Test
     public void testStdIn() throws IOException {
-        final PathURI htsURI = new PathSpecifier(
+        final IOResource htsURI = new PathSpecifier(
                 SystemUtils.IS_OS_WINDOWS ?
                         "-" :
                         "/dev/stdin");
@@ -274,7 +274,7 @@ public class PathSpecifierUnitTest {
 
     @Test
     public void testStdOut() throws IOException {
-        final PathURI pathURI = new PathSpecifier(
+        final IOResource pathURI = new PathSpecifier(
                 SystemUtils.IS_OS_WINDOWS ?
                         "-" :
                         "/dev/stdout");
@@ -298,7 +298,7 @@ public class PathSpecifierUnitTest {
     private void doStreamRoundTrip(final String referenceString) throws IOException {
         final String expectedFileContents = "Test contents";
 
-        final PathURI pathURI = new PathSpecifier(referenceString);
+        final IOResource pathURI = new PathSpecifier(referenceString);
         try (final OutputStream os = pathURI.getOutputStream();
              final DataOutputStream dos = new DataOutputStream(os)) {
             dos.write(expectedFileContents.getBytes());

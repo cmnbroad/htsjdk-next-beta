@@ -1,16 +1,18 @@
 package org.htsjdk.core.utils;
 
-import org.htsjdk.core.api.PathURI;
+import org.htsjdk.core.api.io.IOResource;
 import org.htsjdk.core.exception.HtsjdkException;
+import org.htsjdk.core.exception.HtsjdkIOException;
 
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.*;
 import java.nio.file.spi.FileSystemProvider;
+import java.util.Optional;
 
 /**
- * Default implementation for PathURI.
+ * Default implementation for IOResource.
  *
  * This class takes a raw string that is to be interpreted as a path specifier, and converts it internally to a
  * URI and/or Path object from which a stream can be obtained. If no scheme is provided as part of the raw string
@@ -59,13 +61,13 @@ import java.nio.file.spi.FileSystemProvider;
  *         opaque_part   = uric_no_slash *uric
  *         uric_no_slash = unreserved | escaped | ";" | "?" | ":" | "@" | "&" | "=" | "+" | "$" | ","
  */
-public class PathSpecifier implements PathURI, Serializable {
+public class PathSpecifier implements IOResource, Serializable {
     private static final long serialVersionUID = 1L;
 
     private final String    rawInputString;     // raw input string provided by th user; may or may not have a scheme
     private final URI       uri;                // working URI; always has a scheme (assume "file" if not provided)
     private transient Path  cachedPath;         // cache the Path associated with this URI if its "Path-able"
-    private String          pathFailureReason;  // cache the reason for "toPath" conversion failure
+    private Optional<String> pathFailureReason = Optional.empty(); // cache the reason for "toPath" conversion failure
 
     /**
      * If the raw input string already contains a scheme (including a "file" scheme), assume its already
@@ -108,7 +110,7 @@ public class PathSpecifier implements PathURI, Serializable {
         }
         if (!tempURI.isAbsolute()) {
             // assert the invariant that every URI we create has a scheme, even if the raw input string does not
-            throw new HtsjdkException("URI has no scheme");
+            throw new HtsjdkIOException("URI has no scheme");
         }
 
         uri = tempURI;
@@ -128,15 +130,16 @@ public class PathSpecifier implements PathURI, Serializable {
     @Override
     public boolean isPath() {
         try {
-            return getCachedPath() != null || toPath() != null;
+            return toPath() != null;
         } catch (ProviderNotFoundException |
                 FileSystemNotFoundException |
                 IllegalArgumentException |
                 HtsjdkException |
+                // thrown byjimfs
                 AssertionError e) {
             // jimfs throws an AssertionError that wraps a URISyntaxException when trying to create path where
             // the scheme-specific part is missing or incorrect
-            pathFailureReason = e.getMessage();
+            pathFailureReason = Optional.of(e.getMessage());
             return false;
         }
     }
@@ -161,7 +164,6 @@ public class PathSpecifier implements PathURI, Serializable {
      * Resolve the URI to a {@link Path} object.
      *
      * @return the resulting {@code Path}
-     * @throws HtsjdkException if an I/O error occurs when creating the file system
      */
     @Override
     public Path toPath() {
@@ -175,19 +177,19 @@ public class PathSpecifier implements PathURI, Serializable {
     }
 
     @Override
-    public String getToPathFailureReason() {
-        if (pathFailureReason == null) {
+    public Optional<String> getToPathFailureReason() {
+        if (!pathFailureReason.isPresent()) {
             try {
                 toPath();
-                return String.format("'%s' appears to be a valid Path", rawInputString);
+                return Optional.empty();
             } catch (ProviderNotFoundException e) {
-                return String.format("ProviderNotFoundException: %s", e.getMessage());
+                pathFailureReason = Optional.of(String.format("ProviderNotFoundException: %s", e.getMessage()));
             } catch (FileSystemNotFoundException e) {
-                return String.format("FileSystemNotFoundException: %s", e.getMessage());
+                pathFailureReason = Optional.of(String.format("FileSystemNotFoundException: %s", e.getMessage()));
             } catch (IllegalArgumentException e) {
-                return String.format("IllegalArgumentException: %s", e.getMessage());
+                pathFailureReason = Optional.of(String.format("IllegalArgumentException: %s", e.getMessage()));
             } catch (HtsjdkException e) {
-                return String.format("UserException: %s", e.getMessage());
+                pathFailureReason = Optional.of(String.format("HtsjdkException: %s", e.getMessage()));
             }
         }
         return pathFailureReason;
@@ -196,14 +198,14 @@ public class PathSpecifier implements PathURI, Serializable {
     @Override
     public InputStream getInputStream() {
         if (!isPath()) {
-            throw new HtsjdkException(getToPathFailureReason());
+            throw new HtsjdkIOException(getToPathFailureReason().get());
         }
 
         final Path resourcePath = toPath();
         try {
             return Files.newInputStream(resourcePath);
         } catch (IOException e) {
-            throw new HtsjdkException(
+            throw new HtsjdkIOException(
                     String.format("Could not create open input stream for %s (as URI %s)", getRawInputString(), getURIString()), e);
         }
     }
@@ -211,14 +213,14 @@ public class PathSpecifier implements PathURI, Serializable {
     @Override
     public OutputStream getOutputStream() {
         if (!isPath()) {
-            throw new HtsjdkException(getToPathFailureReason());
+            throw new HtsjdkIOException(getToPathFailureReason().get());
         }
 
         final Path resourcePath = toPath();
         try {
             return Files.newOutputStream(resourcePath);
         } catch (IOException e) {
-            throw new HtsjdkException(String.format("Could not open output stream for %s (as URI %s)", getRawInputString(), getURIString()), e);
+            throw new HtsjdkIOException(String.format("Could not open output stream for %s (as URI %s)", getRawInputString(), getURIString()), e);
         }
     }
 
